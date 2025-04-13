@@ -1,0 +1,776 @@
+---
+title: "Anti-Stress Intervention Among Physicians (ASIP) Study: Analysis"
+author: "Valentin Vetter, MD, MSc (valentin.vetter@charite.de)"
+editor: source
+date: "2024-12-17"
+format:
+  html:
+    toc: true
+    toc-depth: 6
+    code-fold: true
+    self-contained: true
+editor_options: 
+  chunk_output_type: console
+---
+
+This document contains the R-Code used to analyse the data Anti-Stress Intervention Among Physicians (ASIP) Study.
+
+# LOAD LIBRARIES
+```{r, libraries, warning=FALSE, output=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(tableone)
+library(openxlsx)
+library(forcats)
+library(ggpubr)
+library(gridExtra)
+library(lme4)
+library(knitr)
+library(brms)
+library(ggmcmc)
+library(ggthemes)
+library(ggridges)
+library(tableone)
+library(knitr)
+library(ggExtra)
+library(RColorBrewer)
+
+```
+
+# LOAD FUNCTIONS
+```{r, load_functions, output=FALSE}
+setwd("/Users/vetterv/Documents/Universitaet_BSPH/Masterarbeit/Study/Paper/Results_Paper/Code_for_publication/Upload_to_GitHub/code")
+
+source("../code/0_Functions.r")
+
+```
+
+# LOAD DATA
+All data was collected anonymously which means that a no point it was possible to allocate the recorded information to an individual. However, as with all anonymous data, the risk of identification remains if the reported number of participants are small and a lot of information is known about the individuals in the source population. Although both does not necessarily apply to the data analyzed here, I chose to upload separate data sets in random order. This allows full replication of the results in the manuscript but prevents the matching of health data or N-of-1 data to individuals in the extremly unlikely event that individuals should be re-identified by demographic data.
+## N-of-1 Data
+```{r, load_data}
+# Load data from individual N-of-1 studies
+## Mindfulness Breathing
+ASIP_data_Nof1_MB <- read.csv("../data/ASIP_data_Nof1_MB.csv")
+
+## Box Breathing
+ASIP_data_Nof1_BB <- read.csv("../data/ASIP_data_Nof1_BB.csv")
+
+ASIP_data_Nof1_MB_and_BB <- rbind(ASIP_data_Nof1_MB,
+                                  ASIP_data_Nof1_BB)
+```
+
+## REDCap Baseline
+```{r, load_data2}
+# Load data from baseline REDCap Questionnaire
+## Demographic Data
+data_REDCap_table1_MB_and_BB_dem <- read.csv("../data/data_REDCap_table1_MB_and_BB_dem.csv")
+
+## Health Data
+data_REDCap_table1_MB_and_BB_health <- read.csv("../data/data_REDCap_table1_MB_and_BB_health.csv")
+
+## Sex and Stress
+## Since sex and stress is also part of the N-of-1 data sets, they are stored in random order separately from the other data sets for anonymity reasons.
+data_REDCap_table1_MB_and_BB_sex_and_stress <- read.csv("../data/data_REDCap_table1_MB_and_BB_sex_and_stress.csv")
+
+```
+
+## REDCap Follow-up
+```{r, laod_data3}
+
+# Load data from follow-up REDCap questionnaire
+data_REDCap_follow_up <- read.csv("../data/data_REDCap_follow_up_MB_and_BB.csv")
+
+```
+
+
+# VECTORS
+```{r, vectors}
+
+vec_manuscript_IDs_MB <- as.character(data.frame(table(ASIP_data_Nof1_MB$manuscript_ID))[,1])
+
+vec_manuscript_IDs_BB <- as.character(data.frame(table(ASIP_data_Nof1_BB$manuscript_ID))[,1])
+
+```
+
+# DEFINE PROPERTIES
+## Clinical relevance and responder criteria
+```{r, properties}
+cut_off_clinically_relevant <- -0.5
+
+probability_responder <- 0.7
+
+Estimate_individual_max <- 5.5
+Estimate_individual_min <- -5.5
+```
+
+## Colors
+```{r, colors}
+
+color_larger_0 <- brewer.pal(11,"RdYlGn")[5]
+color_0_to_clin_relevant <- brewer.pal(11,"RdYlGn")[9]
+color_smaller_clin_relevant <- brewer.pal(11,"RdYlGn")[10]
+
+```
+
+## Bayesian Analyses
+```{r, properties_byesian_analyses}
+
+chains <- 2
+iter <- 10000
+warmup <- 5000
+
+```
+
+
+# 1. DESCRIPTIVE ANALYSES
+## 1.1. REDCap Data Baseline
+### Table 1
+Descriptive statistics of variables assessed at baseline are calculated. As mentioned above, to ensure participant anonymity by preventing (very unlikely) identification of individuals by demographic information, information used to describe the cohort is stored in separate, randomly sorted data sets. However, to make it it easiert to work with the data, all three data sets are combined here. PLEASE NOTE: This means that values stored as one observation come from different persons! THEREFORE, ANY ANALYSES OTHER THAN DESCRIPTIVE STATISTICS DOES NOT(!!!) YIELD MEANINGFUL RESULTS! The data can only be used to replicate the descriptive statistics presented in the manuscript.
+#### Prep Data Set
+```{r, descriptive_stats_prep_data_set}
+
+data_REDCap_table1_MB <- cbind(filter(data_REDCap_table1_MB_and_BB_dem,
+                                     intervention == 1),
+                              filter(data_REDCap_table1_MB_and_BB_health,
+                                     intervention == 1),
+                              filter(data_REDCap_table1_MB_and_BB_sex_and_stress,
+                                     intervention == 1))
+data_REDCap_table1_MB <- fct_polish_REDCap_data(data_REDCap_table1_MB) |> data.frame()
+
+
+data_REDCap_table1_BB <- cbind(filter(data_REDCap_table1_MB_and_BB_dem,
+                                     intervention == 2),
+                              filter(data_REDCap_table1_MB_and_BB_health,
+                                     intervention == 2),
+                              filter(data_REDCap_table1_MB_and_BB_sex_and_stress,
+                                     intervention == 2))
+data_REDCap_table1_BB <- fct_polish_REDCap_data(data_REDCap_table1_BB) |> data.frame()
+
+```
+
+#### Calculate
+```{r, REDCap_descriptive, output=FALSE}
+
+# Table 1 with values of participant who chose Mindfulness Breathing
+table_1_1 <- table_1_function(data = data_REDCap_table1_MB)
+names(table_1_1) <- paste(names(table_1_1), "_MB", sep = "")
+
+# Table 1 with values of participant who chose Box Breathing
+table_1_2 <- table_1_function(data = data_REDCap_table1_BB)
+names(table_1_2) <- paste(names(table_1_2), "_BB", sep = "")
+
+# Combine tables
+table_1_final_strat <- cbind(table_1_1,
+                       table_1_2)
+rownames(table_1_final_strat) <- c()
+
+write.xlsx(table_1_final_strat,
+           "../results/Table_1.xlsx")
+
+```
+
+## 2.1. StudyU Data
+### PROs during the week
+```{r, stress_during_week}
+
+CreateTableOne(data = ASIP_data_Nof1_MB_and_BB,
+               vars = c("survey1_question1_response",
+                        "survey1_question2_response"),
+               strata = "weekday")
+
+```
+
+### Line Plots
+#### Daily Stress
+```{r, draw_line_plot_all_daily_stress}
+# Mindfulness Breathing, ABAB, Daily Stress
+plot_line_all_1ABAB_resp1 <- fct_line_plot_all(data = filter(ASIP_data_Nof1_MB, sequence == "ABAB"),
+                                         y_var = "survey1_question1_response",
+                                         ylab = "Daily Level of Stress",
+                                         title = "Mindfulness Breathing, ABAB")
+
+# Mindfulness Breathing, BABA, Daily Stress
+plot_line_all_1BABA_resp1 <- fct_line_plot_all(data = filter(ASIP_data_Nof1_MB, sequence == "BABA"),
+                                         y_var = "survey1_question1_response",
+                                         ylab = "Daily Level of Stress",
+                                         title = "Mindfulness Breathing, BABA")
+
+
+# Box Breathing, ABAB, Daily Stress
+plot_line_all_2ABAB_resp1 <- fct_line_plot_all(data = filter(ASIP_data_Nof1_BB, sequence == "ABAB"),
+                                         y_var = "survey1_question1_response",
+                                         ylab = "Daily Level of Stress",
+                                         title = "Box Breathing, ABAB")
+
+# Box Breathing, BABA, Daily Stress
+plot_line_all_2BABA_resp1 <- fct_line_plot_all(data = filter(ASIP_data_Nof1_BB, sequence == "BABA"),
+                                         y_var = "survey1_question1_response",
+                                         ylab = "Daily Level of Stress",
+                                         title = "Box Breathing, BABA")
+
+
+plot_line_resp1 <- ggarrange(
+  plot_line_all_1ABAB_resp1,
+  plot_line_all_2ABAB_resp1,
+  plot_line_all_1BABA_resp1,
+  plot_line_all_2BABA_resp1
+)
+
+plot_line_resp1 <- annotate_figure(plot_line_resp1,
+                                   top = text_grob("Daily Stress Level", face = "bold", size = 14))
+
+ggsave("../results/Supplementary_Figure_1.jpg",
+       plot_line_resp1,
+       height = 19,
+       width = 22,
+       units = "cm")
+
+```
+
+#### Expected stress for next day
+```{r, draw_line_plot_all_next_day}
+# Mindfulness Breathing, ABAB, Daily Stress
+plot_line_all_1ABAB_resp2 <- fct_line_plot_all(data = filter(ASIP_data_Nof1_MB, sequence == "ABAB"),
+                                         y_var = "survey1_question2_response",
+                                         ylab = "Expected Stress Level Next Day",
+                                         title = "Mindfulness Breathing, ABAB")
+
+# Mindfulness Breathing, BABA, Daily Stress
+plot_line_all_1BABA_resp2 <- fct_line_plot_all(data = filter(ASIP_data_Nof1_MB, sequence == "BABA"),
+                                         y_var = "survey1_question2_response",
+                                         ylab = "Expected Stress Level Next Day",
+                                         title = "Mindfulness Breathing, BABA")
+
+
+# Box Breathing, ABAB, Daily Stress
+plot_line_all_2ABAB_resp2 <- fct_line_plot_all(data = filter(ASIP_data_Nof1_BB, sequence == "ABAB"),
+                                         y_var = "survey1_question2_response",
+                                         ylab = "Expected Stress Level Next Day",
+                                         title = "Box Breathing, ABAB")
+
+# Box Breathing, BABA, Daily Stress
+plot_line_all_2BABA_resp2 <- fct_line_plot_all(data = filter(ASIP_data_Nof1_BB, sequence == "BABA"),
+                                         y_var = "survey1_question2_response",
+                                         ylab = "Expected Stress Level Next Day",
+                                         title = "Box Breathing, BABA")
+
+plot_line_resp2 <- ggarrange(
+  plot_line_all_1ABAB_resp2,
+  plot_line_all_2ABAB_resp2,
+  plot_line_all_1BABA_resp2,
+  plot_line_all_2BABA_resp2
+)
+
+plot_line_resp2 <- annotate_figure(plot_line_resp2,
+                                   top = text_grob("Expected Stress Level for the Following Day", face = "bold", size = 14))
+
+ggsave("../results/Supplementary_Figure_2.jpg",
+       plot_line_resp2,
+       height = 19,
+       width = 22,
+       units = "cm")
+
+```
+
+## 2.3 REDCap Data Follow-up
+In this section the data assessed as part of the follow-up questionnaire is analyzed. Matching with baseline data is possible but not necessary to replicate the results in the manuscript. Please contact the study PI, if you are interested in a more complete data set.
+
+### Prep Data Set
+```{r, follow_up_data_prep}
+
+data_REDCap_follow_up$fu_general_feeling_1 <- factor(
+  data_REDCap_follow_up$fu_general_feeling_1,
+  levels = c("Disagree", "Somewhat Disagree", "Somwhat Agree", "Agree")
+)
+data_REDCap_follow_up$fu_general_feeling_2 <- factor(
+  data_REDCap_follow_up$fu_general_feeling_2,
+  levels = c("Disagree", "Somewhat Disagree", "Somwhat Agree", "Agree")
+)
+data_REDCap_follow_up$fu_recommendation <- factor(data_REDCap_follow_up$fu_recommendation,
+                                                  levels = c("No",
+                                                             "Yes, to a colleague",
+                                                             "Yes, to a friend",
+                                                             "Yes, to my family",
+                                                             "Yes, to a patient"))
+data_REDCap_follow_up$fu_implentation_aggregated <- factor(data_REDCap_follow_up$fu_implentation_aggregated,
+                                                           levels = c("Yes, daily or almost daily",
+                                                                      "Yes, on 1-6 days a week",
+                                                                      "Yes, less than once per week",
+                                                                      "Yes, once a month or less",
+                                                                      "No, never"))
+```
+
+### Analysis
+```{r, follow_up_analysis}
+# The following questions respond to the individual items:
+## fu_general_feeling_1: The intervention has reduced my stress level.
+## fu_general_feeling_2: I plan to use the intervention allocated to me in the future.
+## fu_recommendation: Have you recommended the intervention to someone else?
+## fu_implentation_aggregated: Do you use the intervention in your everyday life?
+
+fu_table_strat <- CreateTableOne(
+  data = data_REDCap_follow_up,
+  vars = c(
+    "fu_general_feeling_1",
+    "fu_general_feeling_2",
+    "fu_recommendation",
+    "fu_implentation_aggregated"
+  ),
+  strata = "intervention"
+)
+fu_table_strat_exp <- data.frame(print(fu_table_strat))
+fu_table_strat_exp <- fu_table_strat_exp[,1:2]
+names(fu_table_strat_exp) <- c("Mindfulness Breathing", "Box Breathing")
+fu_table_strat_exp <- cbind("Variables"=rownames(fu_table_strat_exp),fu_table_strat_exp)
+rownames(fu_table_strat_exp)<-c()
+
+write.xlsx(fu_table_strat_exp,
+           "../results/Table_3.xlsx")
+
+```
+
+
+# 2. INDIVIDUAL TRIALS
+```{r, calc_individual_trials_bayes_reported_var}
+
+vec_individual_trials_reported_var <- c(
+  "ID",
+  "Mean_Invt",
+  "SD_Invt",
+  "n_Invt",
+  "Mean_Ctrl",
+  "SD_Ctrl",
+  "n_Ctrl",
+  "Diff",
+  "Estimate",
+  "l_95.CI",
+  "u_95.CI",
+  "prob_clinc_effect"
+)
+```
+
+### 2.1. Daily Stress
+```{r, calc_individual_trials_bayes_daily_stress}
+# define model
+formula_bayes_daily_stress <- as.formula(survey1_question1_response ~ intervention_period  + ar(p = 1))
+
+```
+
+#### 2.1.1. Mindfulness
+Calculate:
+```{r, calc_individual_trials_daily_stress_MB, output = FALSE}
+
+table_indiv_trials_daily_stress_MB <- fct_individual_trials(data_StudyU = ASIP_data_Nof1_MB,
+                                                           vec_ID = vec_manuscript_IDs_MB,
+                                                           formula_bayes = formula_bayes_daily_stress)
+
+```
+
+Save:
+```{r, calc_individual_trials_daily_stress_MB_save}
+
+write.xlsx(
+  select(
+    table_indiv_trials_daily_stress_MB,
+    any_of(vec_individual_trials_reported_var)
+  ),
+  "../results/Supplementary_Table_1.xlsx"
+)
+
+```
+
+#### 2.1.2 Box-Breathing
+Calculate:
+```{r, calc_individual_trials_daily_stress_BB, output = FALSE}
+
+table_indiv_trials_daily_stress_BB <- fct_individual_trials(data_StudyU = ASIP_data_Nof1_BB,
+                                                           vec_ID = vec_manuscript_IDs_BB,
+                                                           formula_bayes = formula_bayes_daily_stress)
+
+```
+
+Save:
+```{r, calc_individual_trials_daily_stress_BB_save}
+
+write.xlsx(
+  select(
+    table_indiv_trials_daily_stress_BB,
+    any_of(vec_individual_trials_reported_var)
+  ),
+  "../results/Supplementary_Table_2.xlsx"
+)
+
+```
+
+
+### 2.2. Stress on next day
+```{r, calc_individual_trials_bayes_next_day}
+
+formula_bayes_next_day <- as.formula(survey1_question2_response ~ intervention_period  + ar(p = 1))
+
+```
+
+#### 2.2.1. Mindfulness
+Calculate:
+```{r, calc_individual_trials_next_day_MB, output = FALSE}
+
+table_indiv_trials_next_day_MB <- fct_individual_trials(data_StudyU = ASIP_data_Nof1_MB,
+                                                       vec_ID = vec_manuscript_IDs_MB,
+                                                       formula_bayes = formula_bayes_next_day)
+
+```
+
+Save:
+```{r, calc_individual_trials_next_day_MB_save}
+
+write.xlsx(
+  select(
+    table_indiv_trials_next_day_MB,
+    any_of(vec_individual_trials_reported_var)
+  ),
+   "../results/Supplementary_Table_3.xlsx"
+)
+
+```
+
+#### 2.2.2 Box-Breathing
+Calculate:
+```{r, calc_individual_trials_next_day_BB, output = FALSE}
+
+table_indiv_trials_next_day_BB <- fct_individual_trials(data_StudyU = ASIP_data_Nof1_BB,
+                                                        vec_ID = vec_manuscript_IDs_BB,
+                                                        formula_bayes = formula_bayes_next_day)
+
+```
+
+Save:
+```{r, calc_individual_trials_BB_save}
+
+write.xlsx(
+  select(
+    table_indiv_trials_next_day_BB,
+    any_of(vec_individual_trials_reported_var)
+  ),
+  "../results/Supplementary_Table_4.xlsx"
+)
+
+```
+
+## Plot: Individual Trials Analysis
+### Plot A: Pointrange
+```{r, draw_indiv_trials_pointrange}
+
+plot_pointrange_daily_MB <- fct_indiv_trials_pointrange(data = table_indiv_trials_daily_stress_MB,
+                                                       title = "Mindfulness Breathing, Daily Stress Level")
+plot_pointrange_daily_BB <- fct_indiv_trials_pointrange(data = table_indiv_trials_daily_stress_BB,
+                                                       title = "Box Breathing, Daily Stress Level")
+
+plot_pointrange_next_day_MB <- fct_indiv_trials_pointrange(data = table_indiv_trials_next_day_MB,
+                                                       title = "Mindfulness Breathing, Stress Next Day")
+plot_pointrange_next_day_MB <- fct_indiv_trials_pointrange(data = table_indiv_trials_next_day_BB,
+                                                       title = "Box Breathing, Stress Next Day")
+
+```
+
+
+### Plot B: Barplots
+```{r, draw_indiv_trials_barplot}
+
+plot_barplot_daily_MB <- fct_indiv_trials_barplot(data = table_indiv_trials_daily_stress_MB,
+                                                       title = "Mindfulness Breathing, Daily Stress Level")
+plot_barplot_dailyBB <- fct_indiv_trials_barplot(data = table_indiv_trials_daily_stress_BB,
+                                                       title = "Box Breathing, Daily Stress Level")
+
+plot_barplot_next_day_MB <- fct_indiv_trials_barplot(data = table_indiv_trials_next_day_MB,
+                                                       title = "Mindfulness Breathing, Stress Next Day")
+plot_barplot_next_day_BB <- fct_indiv_trials_barplot(data = table_indiv_trials_next_day_BB,
+                                                       title = "Box Breathing, Stress Next Day")
+```
+
+### Plot A + B
+```{r, draw_plot_A_and_B}
+
+plot_daily_stress <- ggarrange(plot_pointrange_daily_MB,
+                               plot_pointrange_daily_BB,
+                               plot_barplot_daily_MB,
+                               plot_barplot_dailyBB,
+                          common.legend = TRUE,
+                          legend = "bottom")
+
+ggsave("../results/Figure_2.jpg",
+       plot_daily_stress,
+       height = 15,
+       width = 20,
+       units = "cm")
+
+
+
+plot_next_day <- ggarrange(plot_pointrange_next_day_MB,
+                           plot_pointrange_next_day_MB,
+                           plot_barplot_next_day_MB,
+                           plot_barplot_next_day_BB,
+                          common.legend = TRUE,
+                          legend = "bottom")
+
+ggsave("../results/Figure_3.jpg",
+       plot_next_day,
+       height = 15,
+       width = 20,
+       units = "cm")
+
+```
+
+
+
+# 3. AGGREGATED TRIALS ANALYSIS
+To estimate the intervention effects on the population level, all data was analyzed together. The Bayesian multilevel model was extended to acknowledge the nested structure of the individual trials.
+
+## Define Formulas
+### Daily Stress
+```{r, aggregated_formula_daily_stress}
+
+formula_bayes_daily_stress <- as.formula(
+  survey1_question1_response ~ intervention_period + ar(p = 1) + (intervention_period |
+                                                                    manuscript_ID)
+)
+
+```
+
+### Expected stress on next day
+```{r, aggregated_formula_next_day}
+
+formula_bayes_next_day <- as.formula(
+  survey1_question2_response ~ intervention_period + ar(p = 1) + (intervention_period |
+                                                                    manuscript_ID)
+)
+
+```
+
+### Calculate Results
+#### Primary Analysis
+```{r, aggregated_trials_primary_analysis}
+# Calculate results
+results_aggregated_primary_analysis <- fct_aggregated_trials_all_together(
+  ASIP_data_Nof1_MB = ASIP_data_Nof1_MB,
+  ASIP_data_Nof1_BB = ASIP_data_Nof1_BB,
+  formula_bayes_daily_stress = formula_bayes_daily_stress,
+  formula_bayes_next_day = formula_bayes_next_day
+)
+
+
+# Build report table
+results_aggregated_primary_analysis_table <- rbind(
+  cbind("Trial" = "Daily Stress, Mindfulness Breathing", results_aggregated_primary_analysis[[1]]),
+  cbind("Trial" = "Daily Stress, Box Breathing", results_aggregated_primary_analysis[[3]]),
+  cbind("Trial" = "Expected Stress on Next Day, Mindfulness Breathing", results_aggregated_primary_analysis[[5]]),
+  cbind("Trial" = "Expected Stress on Next Day, Box Breathing", results_aggregated_primary_analysis[[7]])
+)
+
+write.xlsx(results_aggregated_primary_analysis_table,
+              "../results/Table_2.xlsx")
+
+```
+
+
+#### Secondary Analysis
+##### Men vs. Women
+```{r, agg_trials_second_analysis_sex}
+# prep datasets
+## Mindfulness Breathing
+ASIP_data_Nof1_MB_sec_women <- filter(ASIP_data_Nof1_MB,
+                                  dem_sex_birth == "women")
+ASIP_data_Nof1_MB_sec_men <- filter(ASIP_data_Nof1_MB,
+                                  dem_sex_birth == "men")
+
+## Box Breathing
+ASIP_data_Nof1_BB_sec_women <- filter(ASIP_data_Nof1_BB,
+                                  dem_sex_birth == "women")
+ASIP_data_Nof1_BB_sec_men <- filter(ASIP_data_Nof1_BB,
+                                  dem_sex_birth == "men")
+
+# Calculate Results from subgroups
+# women
+results_aggregated_secondary_analysis_women <- fct_aggregated_trials_all_together(
+  ASIP_data_Nof1_MB = ASIP_data_Nof1_MB_sec_women,
+  ASIP_data_Nof1_BB = ASIP_data_Nof1_BB_sec_women,
+  formula_bayes_daily_stress = formula_bayes_daily_stress,
+  formula_bayes_next_day = formula_bayes_next_day
+)
+
+
+# men
+results_aggregated_secondary_analysis_men <- fct_aggregated_trials_all_together(
+  ASIP_data_Nof1_MB = ASIP_data_Nof1_MB_sec_men,
+  ASIP_data_Nof1_BB = ASIP_data_Nof1_BB_sec_men,
+  formula_bayes_daily_stress = formula_bayes_daily_stress,
+  formula_bayes_next_day = formula_bayes_next_day
+)
+
+
+# Build report table
+results_aggregated_secondary_analysis_sex <- rbind(
+  # women
+  cbind("Trial" = "Daily Stress, Mindfulness Breathing", 
+        results_aggregated_secondary_analysis_women[[1]],
+        "Group" = "women"),
+  cbind("Trial" = "Daily Stress, Box Breathing",
+        results_aggregated_secondary_analysis_women[[3]],
+        "Group" = "women"),
+  cbind("Trial" = "Expected Stress on Next Day, Mindfulness Breathing",
+        results_aggregated_secondary_analysis_women[[5]],
+        "Group" = "women"),
+  cbind("Trial" = "Expected Stress on Next Day, Box Breathing",
+        results_aggregated_secondary_analysis_women[[7]],
+        "Group" = "women"),
+  # men
+    cbind("Trial" = "Daily Stress, Mindfulness Breathing", 
+        results_aggregated_secondary_analysis_men[[1]],
+        "Group" = "men"),
+  cbind("Trial" = "Daily Stress, Box Breathing",
+        results_aggregated_secondary_analysis_men[[3]],
+        "Group" = "men"),
+  cbind("Trial" = "Expected Stress on Next Day, Mindfulness Breathing",
+        results_aggregated_secondary_analysis_men[[5]],
+        "Group" = "men"),
+  cbind("Trial" = "Expected Stress on Next Day, Box Breathing",
+        results_aggregated_secondary_analysis_men[[7]],
+        "Group" = "men")
+)
+
+
+write.xlsx(results_aggregated_secondary_analysis_sex,
+           "../results/Supplementary_Table_5.xlsx")
+
+```
+
+##### low vs. high Stress
+```{r, agg_trials_second_analysis_stress}
+# prep datasets
+## Mindfulness Breathing
+ASIP_data_Nof1_MB_sec_low_stress <- filter(ASIP_data_Nof1_MB,
+                                       stress_group == "low_stress")
+ASIP_data_Nof1_MB_sec_high_stress <- filter(ASIP_data_Nof1_MB,
+                                        stress_group == "high_stress")
+
+## Box Breathing
+ASIP_data_Nof1_BB_sec_low_stress <- filter(ASIP_data_Nof1_BB,
+                                       stress_group == "low_stress")
+ASIP_data_Nof1_BB_sec_high_stress <- filter(ASIP_data_Nof1_BB,
+                                        stress_group == "high_stress")
+
+# Calculate Results from subgroups
+# low stress
+results_aggregated_secondary_analysis_low_stress <- fct_aggregated_trials_all_together(
+  ASIP_data_Nof1_MB = ASIP_data_Nof1_MB_sec_low_stress,
+  ASIP_data_Nof1_BB = ASIP_data_Nof1_BB_sec_low_stress,
+  formula_bayes_daily_stress = formula_bayes_daily_stress,
+  formula_bayes_next_day = formula_bayes_next_day
+)
+
+# high stress
+results_aggregated_secondary_analysis_high_stress <- fct_aggregated_trials_all_together(
+  ASIP_data_Nof1_MB = ASIP_data_Nof1_MB_sec_high_stress,
+  ASIP_data_Nof1_BB = ASIP_data_Nof1_BB_sec_high_stress,
+  formula_bayes_daily_stress = formula_bayes_daily_stress,
+  formula_bayes_next_day = formula_bayes_next_day
+)
+
+
+# Build report table
+results_aggregated_secondary_analysis_stress <- rbind(
+  # low stress
+  cbind("Trial" = "Daily Stress, Mindfulness Breathing", 
+        results_aggregated_secondary_analysis_low_stress[[1]],
+        "Group" = "low_stress"),
+  cbind("Trial" = "Daily Stress, Box Breathing",
+        results_aggregated_secondary_analysis_low_stress[[3]],
+        "Group" = "low_stress"),
+  cbind("Trial" = "Expected Stress on Next Day, Mindfulness Breathing",
+        results_aggregated_secondary_analysis_low_stress[[5]],
+        "Group" = "low_stress"),
+  cbind("Trial" = "Expected Stress on Next Day, Box Breathing",
+        results_aggregated_secondary_analysis_low_stress[[7]],
+        "Group" = "low_stress"),
+  # high stress
+    cbind("Trial" = "Daily Stress, Mindfulness Breathing", 
+        results_aggregated_secondary_analysis_high_stress[[1]],
+        "Group" = "high_stress"),
+  cbind("Trial" = "Daily Stress, Box Breathing",
+        results_aggregated_secondary_analysis_high_stress[[3]],
+        "Group" = "high_stress"),
+  cbind("Trial" = "Expected Stress on Next Day, Mindfulness Breathing",
+        results_aggregated_secondary_analysis_high_stress[[5]],
+        "Group" = "high_stress"),
+  cbind("Trial" = "Expected Stress on Next Day, Box Breathing",
+        results_aggregated_secondary_analysis_high_stress[[7]],
+        "Group" = "high_stress")
+)
+
+write.xlsx(results_aggregated_secondary_analysis_stress,
+           "../results/Supplementary_Table_6.xlsx")
+
+```
+
+##### across interventions
+The analysis of all datapoints across interventions (mindfulness + box breathing) estimates the effect of the availability of an anti-stress intervention among the participants that chose the respective intervention.
+```{r, agg_trials_second_analysis_across_interventions}
+# data prep: dataframe ASIP_data_Nof1_MB_and_BB can be used for the analyses
+# Daily Stress across all interventions
+results_aggregated_secondary_analysis_across_interventions_daily_stress <- fct_aggregated_trials(
+  data_StudyU = ASIP_data_Nof1_MB_and_BB,
+  formula_bayes = formula_bayes_daily_stress,
+  outcome_var = "survey1_question1_response"
+)
+
+# Expected Stress Next Day across all interventions
+results_aggregated_secondary_analysis_across_interventions_next_day <- fct_aggregated_trials(
+  data_StudyU = ASIP_data_Nof1_MB_and_BB,
+  formula_bayes = formula_bayes_next_day,
+  outcome_var = "survey1_question2_response"
+)
+
+
+results_aggregated_secondary_analysis_across_interventions <- rbind(
+  cbind("Trial" = "Across interventions (1 + 2), Daily Stress",
+        data.frame(results_aggregated_secondary_analysis_across_interventions_daily_stress[1])),
+  cbind("Trial" = "Across interventions (1 + 2), Stress Next Day",
+        data.frame(results_aggregated_secondary_analysis_across_interventions_next_day[1]))
+)
+
+write.xlsx(results_aggregated_secondary_analysis_across_interventions,
+           "../results/Supplementary_Table_7.xlsx")
+```
+
+
+## Plot: Aggregated Trials Analysis
+```{r, draw_plot_aggregated_analyses}
+
+plot_aggregated_daily_1 <- fct_aggregated_trials_cum_prob_plot(model = results_aggregated_primary_analysis[[2]], title = "Daily Stress Level, Mindfulness Breathing")
+
+plot_aggregated_daily_2 <- fct_aggregated_trials_cum_prob_plot(model = results_aggregated_primary_analysis[[4]], title = "Daily Stress Level, Box Breathing")
+
+plot_aggregated_next_day_1 <- fct_aggregated_trials_cum_prob_plot(model = results_aggregated_primary_analysis[[6]], title = "Stress Next Day, Mindfulness Breathing")
+
+plot_aggregated_next_day_2 <- fct_aggregated_trials_cum_prob_plot(model = results_aggregated_primary_analysis[[8]], title = "Stress Next Day, Box Breathing")
+
+
+plot_aggregated <- ggarrange(plot_aggregated_daily_1,
+                             plot_aggregated_daily_2,
+                             plot_aggregated_next_day_1,
+                             plot_aggregated_next_day_2,
+                             common.legend = TRUE,
+                             legend = "bottom")
+
+plot_aggregated <- annotate_figure(plot_aggregated,
+                                   top = text_grob("Aggregated N-of-1 Trials", face = "bold", size = 14))
+
+plot_aggregated
+
+ggsave("../results/Figure_4.jpg",
+       plot_aggregated,
+       height = 15,
+       width = 20,
+       units = "cm")
+```
